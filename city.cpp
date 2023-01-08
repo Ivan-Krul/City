@@ -14,6 +14,7 @@ typedef uint32_t currency;
 
 struct Street;
 struct Crossroad;
+struct City;
 
 struct Building
 {
@@ -31,6 +32,7 @@ struct Road
 struct Street : public Road
 {
 	std::vector<Building> buildings;
+	City* p_city;
 };
 
 struct Crossroad
@@ -42,6 +44,12 @@ struct City
 {
 	std::vector<Street> streets;
 	std::vector<Crossroad> crossroads;
+};
+
+struct Route
+{
+	Building* p_from_building;
+	Building* p_to_building;
 };
 
 currency CalculateCostStreet(const Street& street)
@@ -120,6 +128,12 @@ void MergeCrossroadWithStreet(Crossroad& crossroad, Street& street)
 	street.crossroads_p[street.crossroads_p[0] > (Crossroad*)0] = &crossroad;
 }
 
+void LinkStreetsWithCity(City& city)
+{
+	for(auto& s : city.streets)
+		s.p_city = &city;
+}
+
 /*
 	Structure:
 		// City
@@ -172,6 +186,7 @@ bool LoadCity(City& city, const std::string dir)
 			fs.read(reinterpret_cast<char*>(&building->length_to_start), sizeof(building->length_to_start));
 		}
 	}
+	LinkStreetsWithCity(city);
 	fs.read(reinterpret_cast<char *>(&bufnum), sizeof(city.crossroads.size()));
 	city.crossroads.resize(bufnum);
 
@@ -217,6 +232,8 @@ void SaveCity(const City& city, const std::string dir)
 			fs.write(reinterpret_cast<const char*>(&building.length_to_start),sizeof(building.length_to_start));
 		}
 	}
+		
+	/*--------------------------------------*/
 
 	size_t street_index = 0;
 	bufnum = city.crossroads.size();
@@ -226,7 +243,7 @@ void SaveCity(const City& city, const std::string dir)
 	for(size_t c = 0; c < city.crossroads.size(); c++)
 	{
 		auto& crossroad = city.crossroads[c];
-		bufnum = city.crossroads.size();
+		bufnum = crossroad.streets_p.size();
 
 		fs.write(reinterpret_cast<const char*>(&bufnum),sizeof(crossroad.streets_p.size()));
 		
@@ -246,6 +263,68 @@ void SaveCity(const City& city, const std::string dir)
 	fs.close();
 }
 
+road_length_m CalculateReverseBuildingStreetDistance(const Building& building, const Street& street, const Crossroad& crossroad)
+{
+	if(building.p_street_to != &street || (street.crossroads_p[0] != &crossroad && street.crossroads_p[1] != &crossroad))
+		return road_length_m();
+	return (street.crossroads_p[0] == &crossroad) ? building.length_to_start : street.length - building.length_to_start;
+}
+ 
+bool CanRouteExist(const Route& route, const Street& street, const bool is_start = true, bool target_search_cor = false, std::vector<Street*>done_streets_p = {})
+{
+	// First we're search related buildings
+	// If we couldn't fould one from related building in the street, then route isn't relevant
+	// Else continue
+	// Then, we need to search in current street needly building
+	// If we found, then return true
+	// Else we're parse all crossroads in the street and summon self for each street in crossroad, except done operations
+	// If we're still couldn't find this, then the route isn't relevant
+	if(&street == nullptr || route.p_from_building == nullptr || route.p_to_building == nullptr)
+		return false;
+	if(is_start)
+	{
+		auto rel = false;
+		// Parse street for relevant route
+		for(const auto& b : street.buildings)
+		{
+			if(route.p_from_building == &b || route.p_to_building == &b)
+			{
+				target_search_cor = (route.p_from_building == &b);
+				rel = true;
+				break;
+			}
+		}
+		if(!rel)
+			return false;
+	}
+	for(auto& s : done_streets_p)
+	{
+		if(s == &street)
+			return false;
+	}
+	auto target = &(target_search_cor ? route.p_to_building : route.p_from_building);
+	// Search building in this street
+	for(auto& b : street.buildings)
+	{
+		if(*target == &b)
+			return true;
+	}
+	done_streets_p.push_back(const_cast<Street*>(&street));
+	// Parse crossroads and futher streets
+	for(const auto& c : street.crossroads_p)
+	{
+		if(c == nullptr)
+			continue;
+		for(const auto& s : c->streets_p)
+		{
+			if(s == &street || s == nullptr )
+				continue;
+			if(CanRouteExist(route, *s, false, target_search_cor))
+				return true;
+		}
+	}	
+	return false;
+}
 
 /*
 
@@ -259,11 +338,7 @@ void SaveCity(const City& city, const std::string dir)
 
 int main()
 {
-	City c;
-	if(!LoadCity(c,"Test City.cty"))
-		return 1;
-	std::cout<<"Done!\n";
-	
+	// City c;
 	// CreateStreets(c.streets, {7,5,8,12});
 	// c.crossroads.resize(3);
 	// InitializeBuildingInStreet(c.streets[0], {{1,34},{3,64},{5,65},{6,23}});
@@ -277,6 +352,20 @@ int main()
 	// MergeCrossroadWithStreet(c.crossroads[1], c.streets[3]);
 	// MergeCrossroadWithStreet(c.crossroads[2], c.streets[3]);
 	// MergeCrossroadWithStreet(c.crossroads[2], c.streets[2]);
-	std::cout<<CalculateCostCity(c)<<'\n';
+	// LinkStreetsWithCity(c);
 	// SaveCity(c,"Test City.cty");
+
+	City c2;
+	Route r;
+
+	if(!LoadCity(c2,"Test City.cty"))
+		return 1;
+	std::cout<<"Done!\n";
+	r.p_from_building = &c2.streets[0].buildings[0];
+	r.p_to_building = &c2.streets[1].buildings[0];
+	std::cout<< (CanRouteExist(r,c2.streets[0]) ? "Exist      " : "Don't exist");
+
+	//std::cout<<((CalculateCostCity(c) == CalculateCostCity(c2)) ? "True " : "False")<<'\n';
+	//std::cout<<CalculateCostCity(c) << '\t' << CalculateCostCity(c2)<<'\n';
+	//std::cout<<"Diff: "<< int32_t(CalculateCostCity(c)) - int32_t(CalculateCostCity(c2))<<'\n';
 }
